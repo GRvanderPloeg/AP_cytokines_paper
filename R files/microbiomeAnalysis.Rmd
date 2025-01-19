@@ -1,0 +1,67 @@
+---
+title: "microbiomeAnalysis"
+output: html_document
+date: "2023-09-05"
+---
+
+```{r libraries}
+library(phyloseq)
+library(tidyverse)
+library(vegan)
+library(ape)
+library(ggpubr)
+```
+
+```{r load phyloseq object and convert}
+phylo_df = import_biom("./Data/ACTA094_Root/ACTA094_Root/Root_zotu_table_sorted.biom")
+
+df = phylo_df@otu_table %>% as.data.frame() %>% as_tibble() %>% select(all_of(starts_with("S"))) %>% t() %>% as_tibble()
+colnames(df) = row.names(phylo_df@otu_table)
+
+sampleMeta = read.csv("./Data/Root_meta_data_parafac.txt", sep="\t") %>% as_tibble()
+sampleMeta = sampleMeta %>% select(X.SampleID, SubjectID, Subject, PainS_NopainA)
+colnames(sampleMeta) = c("sampleID", "subjectID", "subject", "group")
+sampleOrder = colnames(phylo_df@otu_table)[6:34]
+
+taxa = phylo_df@tax_table %>% as.data.frame() %>% as_tibble() %>% mutate(Zotu = row.names(phylo_df@tax_table))
+colnames(taxa) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "Zotu")
+```
+
+```{r homogenize}
+taxa_reordered = taxa %>% arrange(Zotu)
+df_reordered = df %>% mutate(sample = sampleMeta$subjectID) %>% arrange(sample) %>% select(-sample) %>% select(taxa_reordered$Zotu)
+sampleMeta_reordered = sampleMeta %>% arrange(subjectID)
+
+write.table(df_reordered, "./Data/20240429_microbiome_counts.csv", row.names=FALSE, col.names=FALSE)
+write.table(sampleMeta_reordered, "./Data/20240429_microbiome_sampleMeta.csv", row.names=FALSE, col.names=FALSE)
+write.table(taxa_reordered, "./Data/20240429_taxonomy.csv", row.names=FALSE, col.names=FALSE)
+```
+
+```{r load PARAFAC loadings to compare against}
+pfac = read.csv("./20230913_run_onlyCase/PARAFAC models/Athina_mode1.csv", header=FALSE) %>% as_tibble()
+colnames(pfac) = c("Component_1", "Component_2", "SubjectID", "group")
+
+loadingPlot = pfac %>% ggplot(aes(x=Component_1,y=Component_2,col=as.factor(group))) + geom_point()
+loadingPlot
+```
+
+```{r quick BC}
+d = vegdist(df, method="bray")
+BC_pcoa = ape::pcoa(d)
+
+BCplot = BC_pcoa$vectors %>% as_tibble() %>% select(Axis.1, Axis.2) %>% mutate(sampleID = sampleOrder) %>% left_join(sampleMeta) %>% ggplot(aes(x=Axis.1,y=Axis.2,col=as.factor(group))) + geom_point()
+BCplot
+```
+
+```{r quick Aitchison}
+pseudocount = 1
+d = vegdist(df+pseudocount, method="aitchison")
+A_pcoa = ape::pcoa(d)
+
+Aplot = A_pcoa$vectors %>% as_tibble() %>% select(Axis.1, Axis.2) %>% mutate(sampleID = sampleOrder) %>% left_join(sampleMeta) %>% ggplot(aes(x=Axis.1,y=Axis.2,col=as.factor(group))) + geom_point()
+Aplot
+```
+
+```{r compare}
+ggarrange(loadingPlot, BCplot, Aplot, common.legend=TRUE)
+```
